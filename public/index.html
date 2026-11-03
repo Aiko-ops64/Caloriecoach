@@ -2,10 +2,127 @@
 <html lang="nl">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Caloriecoach</title>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 640px; margin: 2rem auto; padding: 0 1rem; color: #222; }
+    form { display: grid; gap: .6rem; margin-bottom: 1.5rem; }
+    label { display: grid; gap: .2rem; font-size: .9rem; }
+    input, select, button { font-size: 1rem; padding: .5rem; }
+    button { cursor: pointer; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: .4rem; border-bottom: 1px solid #ddd; }
+    .getal { text-align: right; }
+    #melding { color: #b00020; min-height: 1.2rem; }
+  </style>
 </head>
 <body>
   <h1>Caloriecoach</h1>
-  <p>Hallo! De server werkt.</p>
+
+  <h2>Eten toevoegen</h2>
+  <form id="etenForm">
+    <label>Datum <input type="date" id="datum" required></label>
+    <label>Maaltijd
+      <select id="maaltijd">
+        <option>Ontbijt</option>
+        <option>Lunch</option>
+        <option>Diner</option>
+        <option>Tussendoor</option>
+      </select>
+    </label>
+    <label>Omschrijving <input type="text" id="omschrijving" required></label>
+    <label>Hoeveelheid (gram, mag leeg) <input type="number" id="gram" min="0"></label>
+    <label>Calorieën (kcal) <input type="number" id="kcal" min="0" required></label>
+    <button type="submit">Toevoegen</button>
+    <div id="melding"></div>
+  </form>
+
+  <h2>Gegeten op <span id="datumTitel"></span></h2>
+  <table>
+    <thead>
+      <tr><th>Maaltijd</th><th>Omschrijving</th><th class="getal">Gram</th><th class="getal">kcal</th><th></th></tr>
+    </thead>
+    <tbody id="lijst"></tbody>
+    <tfoot>
+      <tr><th colspan="3">Totaal</th><th class="getal" id="totaal">0</th><th></th></tr>
+    </tfoot>
+  </table>
+
+  <script>
+    const datumVeld = document.getElementById('datum');
+    const melding = document.getElementById('melding');
+
+    // Datum van vandaag in jouw tijdzone, in de vorm 2026-11-03
+    function vandaag() {
+      const d = new Date();
+      d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+      return d.toISOString().slice(0, 10);
+    }
+
+    async function laadLijst() {
+      const datum = datumVeld.value;
+      document.getElementById('datumTitel').textContent = datum;
+      const antwoord = await fetch('/api/eten?datum=' + datum);
+      const lijst = await antwoord.json();
+
+      const tbody = document.getElementById('lijst');
+      tbody.innerHTML = '';
+      let totaal = 0;
+      for (const regel of lijst) {
+        const tr = document.createElement('tr');
+        const waarden = [regel.maaltijd, regel.omschrijving, regel.gram ?? '', regel.kcal];
+        waarden.forEach((w, i) => {
+          const td = document.createElement('td');
+          td.textContent = w;
+          if (i >= 2) td.className = 'getal';
+          tr.appendChild(td);
+        });
+
+        const tdKnop = document.createElement('td');
+        const knop = document.createElement('button');
+        knop.textContent = 'Verwijder';
+        knop.addEventListener('click', async () => {
+          if (!confirm('Deze regel verwijderen?')) return;
+          await fetch('/api/eten/' + regel.id, { method: 'DELETE' });
+          laadLijst();
+        });
+        tdKnop.appendChild(knop);
+        tr.appendChild(tdKnop);
+
+        tbody.appendChild(tr);
+        totaal += regel.kcal;
+      }
+      document.getElementById('totaal').textContent = totaal;
+    }
+
+    document.getElementById('etenForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      melding.textContent = '';
+      const antwoord = await fetch('/api/eten', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          datum: datumVeld.value,
+          maaltijd: document.getElementById('maaltijd').value,
+          omschrijving: document.getElementById('omschrijving').value,
+          gram: document.getElementById('gram').value,
+          kcal: document.getElementById('kcal').value
+        })
+      });
+      if (!antwoord.ok) {
+        const fout = await antwoord.json();
+        melding.textContent = fout.fout;
+        return;
+      }
+      document.getElementById('omschrijving').value = '';
+      document.getElementById('gram').value = '';
+      document.getElementById('kcal').value = '';
+      laadLijst();
+    });
+
+    datumVeld.addEventListener('change', laadLijst);
+    datumVeld.value = vandaag();
+    laadLijst();
+  </script>
 </body>
 </html>

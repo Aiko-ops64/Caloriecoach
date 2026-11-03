@@ -1,6 +1,7 @@
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 
 const app = express();
 const PORT = 3000;
@@ -9,7 +10,6 @@ const PORT = 3000;
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const DATA_FILE = path.join(DATA_DIR, 'data.json');
 
-// Leest alle gegevens. Bestaat het bestand nog niet, dan begint de app leeg.
 function leesData() {
   if (!fs.existsSync(DATA_FILE)) {
     return { eten: [], verbruik: [], gewicht: [] };
@@ -17,7 +17,6 @@ function leesData() {
   return JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
 }
 
-// Schrijft alle gegevens naar het bestand (en maakt de map aan als die ontbreekt)
 function schrijfData(data) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
   fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
@@ -26,12 +25,44 @@ function schrijfData(data) {
 app.use(express.json());
 app.use(express.static('public'));
 
-// TIJDELIJK, alleen om de opslag te testen. Verdwijnt in de volgende stap.
-app.get('/api/test-opslaan', (req, res) => {
+// Geeft het eten van één dag terug: /api/eten?datum=2026-11-03
+app.get('/api/eten', (req, res) => {
   const data = leesData();
-  data.eten.push({ omschrijving: 'testregel', tijd: new Date().toISOString() });
+  const lijst = data.eten.filter(e => e.datum === req.query.datum);
+  res.json(lijst);
+});
+
+// Voegt een etensregel toe
+app.post('/api/eten', (req, res) => {
+  const { datum, maaltijd, omschrijving, gram, kcal } = req.body;
+  const k = Number(kcal);
+  if (!datum || !omschrijving || kcal === '' || kcal == null || isNaN(k) || k < 0) {
+    return res.status(400).json({ fout: 'Vul datum, omschrijving en calorieën in.' });
+  }
+  const regel = {
+    id: crypto.randomUUID(),
+    datum,
+    maaltijd: maaltijd || 'Tussendoor',
+    omschrijving: String(omschrijving).trim(),
+    gram: gram ? Number(gram) : null,
+    kcal: k
+  };
+  const data = leesData();
+  data.eten.push(regel);
   schrijfData(data);
-  res.json(data);
+  res.status(201).json(regel);
+});
+
+// Verwijdert één etensregel
+app.delete('/api/eten/:id', (req, res) => {
+  const data = leesData();
+  const aantalVoor = data.eten.length;
+  data.eten = data.eten.filter(e => e.id !== req.params.id);
+  if (data.eten.length === aantalVoor) {
+    return res.status(404).json({ fout: 'Regel niet gevonden.' });
+  }
+  schrijfData(data);
+  res.json({ ok: true });
 });
 
 app.listen(PORT, () => {
