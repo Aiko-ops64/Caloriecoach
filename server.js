@@ -53,6 +53,18 @@ app.post('/api/eten', (req, res) => {
   res.status(201).json(regel);
 });
 
+// Verwijdert één etensregel
+app.delete('/api/eten/:id', (req, res) => {
+  const data = leesData();
+  const aantalVoor = data.eten.length;
+  data.eten = data.eten.filter(e => e.id !== req.params.id);
+  if (data.eten.length === aantalVoor) {
+    return res.status(404).json({ fout: 'Regel niet gevonden.' });
+  }
+  schrijfData(data);
+  res.json({ ok: true });
+});
+
 app.listen(PORT, () => {
   console.log('Caloriecoach draait op http://localhost:' + PORT);
   console.log('Gegevens in: ' + DATA_FILE);

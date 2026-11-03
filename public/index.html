@@ -40,11 +40,11 @@
   <h2>Gegeten op <span id="datumTitel"></span></h2>
   <table>
     <thead>
-      <tr><th>Maaltijd</th><th>Omschrijving</th><th class="getal">Gram</th><th class="getal">kcal</th></tr>
+      <tr><th>Maaltijd</th><th>Omschrijving</th><th class="getal">Gram</th><th class="getal">kcal</th><th></th></tr>
     </thead>
     <tbody id="lijst"></tbody>
     <tfoot>
-      <tr><th colspan="3">Totaal</th><th class="getal" id="totaal">0</th></tr>
+      <tr><th colspan="3">Totaal</th><th class="getal" id="totaal">0</th><th></th></tr>
     </tfoot>
   </table>
 
@@ -77,6 +77,18 @@
           if (i >= 2) td.className = 'getal';
           tr.appendChild(td);
         });
+
+        const tdKnop = document.createElement('td');
+        const knop = document.createElement('button');
+        knop.textContent = 'Verwijder';
+        knop.addEventListener('click', async () => {
+          if (!confirm('Deze regel verwijderen?')) return;
+          await fetch('/api/eten/' + regel.id, { method: 'DELETE' });
+          laadLijst();
+        });
+        tdKnop.appendChild(knop);
+        tr.appendChild(tdKnop);
+
         tbody.appendChild(tr);
         totaal += regel.kcal;
       }
