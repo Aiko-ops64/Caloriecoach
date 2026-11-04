@@ -61,6 +61,12 @@
     </tfoot>
   </table>
 
+  
+  <p style="font-size:.8rem;color:#666;margin-top:1.5rem;">
+    Voedingswaarden: <a href="https://www.rivm.nl/nevo" target="_blank" rel="noopener">NEVO-online 2025/9.0 (RIVM)</a>
+    en <a href="https://world.openfoodfacts.org" target="_blank" rel="noopener">Open Food Facts</a>.
+  </p>
+
   <script>
     const formulier = document.getElementById('etenForm');
     const datumVeld = document.getElementById('datum');
@@ -134,34 +140,48 @@
       if (gramVeld.value === '') gramVeld.focus();
     }
 
-    async function zoek(q) {
-      let antwoord;
-      try {
-        antwoord = await fetch('/api/zoek?q=' + encodeURIComponent(q));
-      } catch (e) {
-        toonBericht('Zoeken lukt nu niet. Vul de calorieën zelf in.');
-        return;
+        function zoek(q) {
+      const actueel = () => omschrijvingVeld.value.trim() === q;
+      let basis = [];
+      let merken = q.length >= 3 ? null : [];   // null betekent: nog bezig
+      let merkFout = false;
+
+      function teken() {
+        if (!actueel()) return;   // je hebt intussen iets anders getypt
+        suggestieBlok.innerHTML = '';
+        for (const p of [...basis, ...(merken || [])]) {
+          const knop = document.createElement('button');
+          knop.type = 'button';
+          knop.textContent = p.naam + (p.merk ? ' (' + p.merk + ')' : '')
+            + ' – ' + p.kcal100 + ' kcal per 100 g · ' + p.bron;
+          knop.addEventListener('click', () => kiesProduct(p));
+          suggestieBlok.appendChild(knop);
+        }
+        let tekst = '';
+        if (merken === null) tekst = 'Merkproducten zoeken…';
+        else if (merkFout) tekst = 'Merkproducten zoeken lukt nu niet.';
+        else if (basis.length === 0 && merken.length === 0) tekst = 'Geen producten gevonden. Vul de calorieën zelf in.';
+        if (tekst) {
+          const div = document.createElement('div');
+          div.className = 'info';
+          div.textContent = tekst;
+          suggestieBlok.appendChild(div);
+        }
+        suggestieBlok.hidden = suggestieBlok.children.length === 0;
       }
-      // Is de invoer intussen veranderd? Dan is dit antwoord verouderd.
-      if (omschrijvingVeld.value.trim() !== q) return;
-      if (!antwoord.ok) {
-        toonBericht('Zoeken lukt nu niet. Vul de calorieën zelf in.');
-        return;
+
+      fetch('/api/zoek/basis?q=' + encodeURIComponent(q))
+        .then(r => (r.ok ? r.json() : []))
+        .catch(() => [])
+        .then(lijst => { basis = lijst; teken(); });
+
+      if (merken === null) {
+        fetch('/api/zoek/merk?q=' + encodeURIComponent(q))
+          .then(r => { if (!r.ok) throw new Error('mislukt'); return r.json(); })
+          .then(lijst => { merken = lijst; })
+          .catch(() => { merken = []; merkFout = true; })
+          .then(teken);
       }
-      const lijst = await antwoord.json();
-      if (lijst.length === 0) {
-        toonBericht('Geen producten gevonden. Vul de calorieën zelf in.');
-        return;
-      }
-      suggestieBlok.innerHTML = '';
-      for (const p of lijst) {
-        const knop = document.createElement('button');
-        knop.type = 'button';
-        knop.textContent = p.naam + (p.merk ? ' (' + p.merk + ')' : '') + ' – ' + p.kcal100 + ' kcal per 100 g';
-        knop.addEventListener('click', () => kiesProduct(p));
-        suggestieBlok.appendChild(knop);
-      }
-      suggestieBlok.hidden = false;
     }
 
     // Tijdens het typen: een nieuw woord betekent dat het gekozen product niet meer geldt
@@ -170,7 +190,7 @@
       toonProductInfo();
       clearTimeout(zoekTimer);
       const q = omschrijvingVeld.value.trim();
-      if (q.length < 3) { verbergSuggesties(); return; }
+      if (q.length < 2) { verbergSuggesties(); return; }
       zoekTimer = setTimeout(() => zoek(q), 400);
     });
 

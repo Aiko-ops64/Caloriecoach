@@ -2,6 +2,7 @@ const express = require('express');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { laadNevo, zoekNevo, normaliseer, opWoorden } = require('./nevo')
 
 const app = express();
 const PORT = 3000;
@@ -9,6 +10,15 @@ const PORT = 3000;
 // Waar de gegevens staan: de map uit DATA_DIR, anders de map "data" in dit project
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const DATA_FILE = path.join(DATA_DIR, 'data.json');
+
+// Het NEVO-bestand met basisvoeding (CSV van het RIVM)
+// Pakt het (laatste) CSV-bestand in de map "nevo", ongeacht de naam of versie
+const NEVO_MAP = path.join(__dirname, 'nevo');
+const nevoCsv = fs.existsSync(NEVO_MAP)
+  ? fs.readdirSync(NEVO_MAP).filter(f => f.toLowerCase().endsWith('.csv')).sort().pop()
+  : null;
+const NEVO_BESTAND = process.env.NEVO_BESTAND || (nevoCsv ? path.join(NEVO_MAP, nevoCsv) : '');
+laadNevo(NEVO_BESTAND);
 
 function leesData() {
   if (!fs.existsSync(DATA_FILE)) {
@@ -103,14 +113,26 @@ app.delete('/api/eten/:id', (req, res) => {
   res.json({ ok: true });
 });
 
-// Zoekt een product in Open Food Facts: /api/zoek?q=pindakaas
-app.get('/api/zoek', async (req, res) => {
+// Basisvoeding uit NEVO: /api/zoek/basis?q=gebakken ei (staat lokaal, dus meteen klaar)
+app.get('/api/zoek/basis', (req, res) => {
   const q = String(req.query.q || '').trim();
   if (q.length < 2) return res.json([]);
+  res.json(zoekNevo(q, 10).map(p => ({ ...p, bron: 'NEVO' })));
+});
+
+app.listen(PORT, () => {
+  console.log('Caloriecoach draait op http://localhost:' + PORT);
+  console.log('Gegevens in: ' + DATA_FILE);
+});
+
+// Merkproducten uit Open Food Facts: /api/zoek/merk?q=pindakaas
+app.get('/api/zoek/merk', async (req, res) => {
+  const q = String(req.query.q || '').trim();
+  if (q.length < 3) return res.json([]);
 
   const url = 'https://search.openfoodfacts.org/search'
     + '?q=' + encodeURIComponent(q)
-    + '&page_size=15'
+    + '&page_size=20'
     + '&fields=product_name,brands,nutriments';
 
   try {
@@ -120,6 +142,7 @@ app.get('/api/zoek', async (req, res) => {
     });
     if (!antwoord.ok) throw new Error('Status ' + antwoord.status);
     const gegevens = await antwoord.json();
+    const woorden = opWoorden(q);
 
     const resultaten = (gegevens.hits || [])
       .map(p => ({
@@ -128,22 +151,23 @@ app.get('/api/zoek', async (req, res) => {
         kcal100: p.nutriments ? p.nutriments['energy-kcal_100g'] : undefined,
         eiwit100: p.nutriments ? p.nutriments['proteins_100g'] : undefined
       }))
-      // Alleen producten met een naam en een calorie-waarde
       .filter(p => p.naam && typeof p.kcal100 === 'number')
+      // Alle woorden die je typte moeten in naam of merk voorkomen
+      .filter(p => {
+        const tekst = normaliseer(p.naam + ' ' + p.merk);
+        return woorden.every(w => tekst.includes(w));
+      })
+      .slice(0, 8)
       .map(p => ({
         ...p,
         kcal100: Math.round(p.kcal100),
-        eiwit100: typeof p.eiwit100 === 'number' ? Math.round(p.eiwit100 * 10) / 10 : null
+        eiwit100: typeof p.eiwit100 === 'number' ? Math.round(p.eiwit100 * 10) / 10 : null,
+        bron: 'Open Food Facts'
       }));
 
     res.json(resultaten);
   } catch (fout) {
     console.error('Zoeken mislukt:', fout.message);
-    res.status(502).json({ fout: 'Zoeken lukt nu niet. Vul de calorieën zelf in.' });
+    res.status(502).json({ fout: 'Merkproducten zoeken lukt nu niet.' });
   }
-});
-
-app.listen(PORT, () => {
-  console.log('Caloriecoach draait op http://localhost:' + PORT);
-  console.log('Gegevens in: ' + DATA_FILE);
 });
