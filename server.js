@@ -22,6 +22,15 @@ function schrijfData(data) {
   fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
 }
 
+// Zet een waarde om naar een getal, of naar null als er niets (geldigs) is ingevuld
+function getalOfNull(w) {
+  if (w === '' || w == null) return null;
+  const n = Number(w);
+  return isNaN(n) ? null : n;
+}
+
+
+
 // Controleert de invoer van het formulier en maakt er een nette regel van.
 // Geeft null terug als er iets ontbreekt of niet klopt.
 function maakRegel(body) {
@@ -36,7 +45,10 @@ function maakRegel(body) {
     maaltijd: maaltijd || 'Tussendoor',
     omschrijving: tekst,
     gram: gram ? Number(gram) : null,
-    kcal: k
+    kcal: k,
+    eiwit: getalOfNull(body.eiwit),
+    kcal100: getalOfNull(body.kcal100),
+    eiwit100: getalOfNull(body.eiwit100)
   };
 }
 
