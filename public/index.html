@@ -38,13 +38,17 @@
         <option>Tussendoor</option>
       </select>
     </label>
-    <label>Omschrijving (typ om te zoeken)
+    <label>Omschrijving (typ om te zoeken, of klik voor je vaste producten)
       <input type="text" id="omschrijving" autocomplete="off" required>
     </label>
     <div id="suggesties" hidden></div>
     <div id="productInfo"></div>
     <label>Hoeveelheid (gram) <input type="number" id="gram" min="0" step="any"></label>
     <label>Calorieën (kcal) <input type="number" id="kcal" min="0" required></label>
+    <label>Eiwit (g, mag leeg) <input type="number" id="eiwit" min="0" step="any"></label>
+    <label style="display: flex; align-items: center; gap: .5rem;">
+      <input type="checkbox" id="onthoud"> Onthoud als eigen product
+    </label>
     <button type="submit" id="opslaanKnop">Toevoegen</button>
     <button type="button" id="annuleerKnop" hidden>Annuleren</button>
     <div id="melding"></div>
@@ -61,10 +65,9 @@
     </tfoot>
   </table>
 
-  
   <p style="font-size:.8rem;color:#666;margin-top:1.5rem;">
-    Voedingswaarden: <a href="https://www.rivm.nl/nevo" target="_blank" rel="noopener">NEVO-online 2025/9.0 (RIVM)</a>
-    en <a href="https://world.openfoodfacts.org" target="_blank" rel="noopener">Open Food Facts</a>.
+    Gebaseerd op gegevens van NEVO-online versie 2025/9.0, RIVM, Bilthoven en andere gegevens.
+    <br>Merkproducten: <a href="https://world.openfoodfacts.org" target="_blank" rel="noopener">Open Food Facts</a>.
   </p>
 
   <script>
@@ -73,6 +76,7 @@
     const omschrijvingVeld = document.getElementById('omschrijving');
     const gramVeld = document.getElementById('gram');
     const kcalVeld = document.getElementById('kcal');
+    const onthoudVeld = document.getElementById('onthoud');
     const suggestieBlok = document.getElementById('suggesties');
     const productInfo = document.getElementById('productInfo');
     const melding = document.getElementById('melding');
@@ -116,6 +120,9 @@
       const gram = Number(gramVeld.value);
       if (isNaN(gram)) return;
       kcalVeld.value = Math.round(gekozen.kcal100 * gram / 100);
+      eiwitVeld.value = gekozen.eiwit100 != null
+        ? Math.round(gekozen.eiwit100 * gram / 100 * 10) / 10
+        : '';
     }
 
     function verbergSuggesties() {
@@ -123,57 +130,65 @@
       suggestieBlok.innerHTML = '';
     }
 
-    function toonBericht(tekst) {
+    // Toont een lijst met producten, met eventueel een regel tekst eronder
+    function toonSuggesties(lijst, tekst) {
       suggestieBlok.innerHTML = '';
-      const div = document.createElement('div');
-      div.className = 'info';
-      div.textContent = tekst;
-      suggestieBlok.appendChild(div);
-      suggestieBlok.hidden = false;
+      for (const p of lijst) {
+        const knop = document.createElement('button');
+        knop.type = 'button';
+        knop.textContent = p.naam + (p.merk ? ' (' + p.merk + ')' : '')
+          + ' – ' + p.kcal100 + ' kcal per 100 g'
+          + (p.portie ? ' · portie ' + nl(p.portie) + ' g' : '')
+          + ' · ' + p.bron;
+        knop.addEventListener('click', () => kiesProduct(p));
+        suggestieBlok.appendChild(knop);
+      }
+      if (tekst) {
+        const div = document.createElement('div');
+        div.className = 'info';
+        div.textContent = tekst;
+        suggestieBlok.appendChild(div);
+      }
+      suggestieBlok.hidden = suggestieBlok.children.length === 0;
     }
 
     function kiesProduct(p) {
       omschrijvingVeld.value = p.naam + (p.merk ? ' (' + p.merk + ')' : '');
       gekozen = { kcal100: p.kcal100, eiwit100: p.eiwit100 };
+      onthoudVeld.checked = p.bron === 'Eigen';
       verbergSuggesties();
+      // Een eigen product heeft een standaardportie: die vullen we alvast in
+      if (gramVeld.value === '' && p.portie) gramVeld.value = p.portie;
       berekenUitProduct();
       if (gramVeld.value === '') gramVeld.focus();
     }
 
-        function zoek(q) {
+    function zoek(q) {
       const actueel = () => omschrijvingVeld.value.trim() === q;
+      let eigen = [];
       let basis = [];
+      let eigenKlaar = false;
+      let basisKlaar = false;
       let merken = q.length >= 3 ? null : [];   // null betekent: nog bezig
       let merkFout = false;
 
       function teken() {
         if (!actueel()) return;   // je hebt intussen iets anders getypt
-        suggestieBlok.innerHTML = '';
-        for (const p of [...basis, ...(merken || [])]) {
-          const knop = document.createElement('button');
-          knop.type = 'button';
-          knop.textContent = p.naam + (p.merk ? ' (' + p.merk + ')' : '')
-            + ' – ' + p.kcal100 + ' kcal per 100 g · ' + p.bron;
-          knop.addEventListener('click', () => kiesProduct(p));
-          suggestieBlok.appendChild(knop);
-        }
         let tekst = '';
         if (merken === null) tekst = 'Merkproducten zoeken…';
         else if (merkFout) tekst = 'Merkproducten zoeken lukt nu niet.';
-        else if (basis.length === 0 && merken.length === 0) tekst = 'Geen producten gevonden. Vul de calorieën zelf in.';
-        if (tekst) {
-          const div = document.createElement('div');
-          div.className = 'info';
-          div.textContent = tekst;
-          suggestieBlok.appendChild(div);
+        else if (eigenKlaar && basisKlaar && eigen.length + basis.length + merken.length === 0) {
+          tekst = 'Geen producten gevonden. Vul de calorieën zelf in.';
         }
-        suggestieBlok.hidden = suggestieBlok.children.length === 0;
+        toonSuggesties([...eigen, ...basis, ...(merken || [])], tekst);
       }
 
-      fetch('/api/zoek/basis?q=' + encodeURIComponent(q))
+      const haalLijst = (url) => fetch(url + encodeURIComponent(q))
         .then(r => (r.ok ? r.json() : []))
-        .catch(() => [])
-        .then(lijst => { basis = lijst; teken(); });
+        .catch(() => []);
+
+      haalLijst('/api/zoek/eigen?q=').then(lijst => { eigen = lijst; eigenKlaar = true; teken(); });
+      haalLijst('/api/zoek/basis?q=').then(lijst => { basis = lijst; basisKlaar = true; teken(); });
 
       if (merken === null) {
         fetch('/api/zoek/merk?q=' + encodeURIComponent(q))
@@ -184,9 +199,22 @@
       }
     }
 
+    // Klik je in het lege veld? Dan zie je de producten die je het vaakst gebruikt
+    omschrijvingVeld.addEventListener('focus', async () => {
+      if (omschrijvingVeld.value.trim() !== '' || bewerkId !== null) return;
+      let lijst = [];
+      try {
+        const antwoord = await fetch('/api/zoek/eigen?q=');
+        if (antwoord.ok) lijst = await antwoord.json();
+      } catch (e) { return; }
+      if (omschrijvingVeld.value.trim() !== '' || lijst.length === 0) return;
+      toonSuggesties(lijst, 'Eerder gebruikt');
+    });
+
     // Tijdens het typen: een nieuw woord betekent dat het gekozen product niet meer geldt
     omschrijvingVeld.addEventListener('input', () => {
       gekozen = null;
+      onthoudVeld.checked = true;
       toonProductInfo();
       clearTimeout(zoekTimer);
       const q = omschrijvingVeld.value.trim();
@@ -209,6 +237,8 @@
       omschrijvingVeld.value = '';
       gramVeld.value = '';
       kcalVeld.value = '';
+      onthoudVeld.checked = false;
+      eiwitVeld.value = regel.eiwit ?? '';
       melding.textContent = '';
       verbergSuggesties();
       toonProductInfo();
@@ -226,6 +256,7 @@
       omschrijvingVeld.value = regel.omschrijving;
       gramVeld.value = regel.gram ?? '';
       kcalVeld.value = regel.kcal;
+      onthoudVeld.checked = false;
       gekozen = regel.kcal100 != null ? { kcal100: regel.kcal100, eiwit100: regel.eiwit100 } : null;
       melding.textContent = '';
       verbergSuggesties();
@@ -238,12 +269,7 @@
       melding.textContent = '';
       const wijzigt = bewerkId !== null;
 
-      // Eiwit van deze portie: eiwit per 100 g x gram / 100
-      const gram = Number(gramVeld.value);
-      let eiwit = '';
-      if (gekozen && gekozen.eiwit100 != null && gramVeld.value !== '' && !isNaN(gram)) {
-        eiwit = Math.round(gekozen.eiwit100 * gram / 100 * 10) / 10;
-      }
+      
 
       const antwoord = await fetch(wijzigt ? '/api/eten/' + bewerkId : '/api/eten', {
         method: wijzigt ? 'PUT' : 'POST',
@@ -254,7 +280,8 @@
           omschrijving: omschrijvingVeld.value,
           gram: gramVeld.value,
           kcal: kcalVeld.value,
-          eiwit: eiwit,
+          onthoud: onthoudVeld.checked,
+          eiwit: eiwitVeld.value,
           kcal100: gekozen ? gekozen.kcal100 : '',
           eiwit100: gekozen && gekozen.eiwit100 != null ? gekozen.eiwit100 : ''
         })

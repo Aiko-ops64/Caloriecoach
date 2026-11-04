@@ -2,7 +2,7 @@ const express = require('express');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { laadNevo, zoekNevo, normaliseer, opWoorden } = require('./nevo')
+const { laadNevo, zoekNevo, normaliseer, opWoorden } = require('./nevo.js');
 
 const app = express();
 const PORT = 3000;
@@ -11,8 +11,7 @@ const PORT = 3000;
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const DATA_FILE = path.join(DATA_DIR, 'data.json');
 
-// Het NEVO-bestand met basisvoeding (CSV van het RIVM)
-// Pakt het (laatste) CSV-bestand in de map "nevo", ongeacht de naam of versie
+// Het NEVO-bestand met basisvoeding (het laatste CSV-bestand in de map "nevo")
 const NEVO_MAP = path.join(__dirname, 'nevo');
 const nevoCsv = fs.existsSync(NEVO_MAP)
   ? fs.readdirSync(NEVO_MAP).filter(f => f.toLowerCase().endsWith('.csv')).sort().pop()
@@ -22,7 +21,7 @@ laadNevo(NEVO_BESTAND);
 
 function leesData() {
   if (!fs.existsSync(DATA_FILE)) {
-    return { eten: [], verbruik: [], gewicht: [] };
+    return { eten: [], verbruik: [], gewicht: [], producten: [] };
   }
   return JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
 }
@@ -38,8 +37,6 @@ function getalOfNull(w) {
   const n = Number(w);
   return isNaN(n) ? null : n;
 }
-
-
 
 // Controleert de invoer van het formulier en maakt er een nette regel van.
 // Geeft null terug als er iets ontbreekt of niet klopt.
@@ -62,6 +59,55 @@ function maakRegel(body) {
   };
 }
 
+// Bewaart het eten als product in je eigen lijst (per 100 g), met de laatste hoeveelheid als portie
+function onthoudProduct(data, regel, telMee) {
+  if (!data.producten) data.producten = [];
+  let kcal100 = regel.kcal100;
+  let eiwit100 = regel.eiwit100;
+
+  // Zelf ingevuld? Dan rekenen we terug naar per 100 g
+  if (kcal100 == null && regel.gram > 0) {
+    kcal100 = Math.round(regel.kcal / regel.gram * 100);
+    if (regel.eiwit != null) {
+      eiwit100 = Math.round(regel.eiwit / regel.gram * 100 * 10) / 10;
+    }
+  }
+  if (kcal100 == null) return;   // geen hoeveelheid en geen productgegevens: niets te onthouden
+
+  const sleutel = normaliseer(regel.omschrijving);
+  let product = data.producten.find(p => normaliseer(p.naam) === sleutel);
+  if (!product) {
+    product = { naam: regel.omschrijving, gebruikt: 0 };
+    data.producten.push(product);
+  }
+  product.kcal100 = kcal100;
+  product.eiwit100 = eiwit100 ?? null;
+  if (regel.gram > 0) product.portie = regel.gram;
+  product.laatst = regel.datum;
+  if (telMee) product.gebruikt = (product.gebruikt || 0) + 1;
+}
+
+// Zoekt in je eigen producten. Zonder zoekvraag: de meest gebruikte.
+function zoekEigen(vraag, max) {
+  const woorden = opWoorden(vraag);
+  const data = leesData();
+  return (data.producten || [])
+    .filter(p => {
+      const tekst = normaliseer(p.naam);
+      return woorden.every(w => tekst.includes(w));
+    })
+    .sort((a, b) => (b.gebruikt || 0) - (a.gebruikt || 0))
+    .slice(0, max)
+    .map(p => ({
+      naam: p.naam,
+      merk: '',
+      kcal100: p.kcal100,
+      eiwit100: p.eiwit100,
+      portie: p.portie || null,
+      bron: 'Eigen'
+    }));
+}
+
 app.use(express.json());
 app.use(express.static('public'));
 
@@ -81,6 +127,7 @@ app.post('/api/eten', (req, res) => {
   const regel = { id: crypto.randomUUID(), ...nieuw };
   const data = leesData();
   data.eten.push(regel);
+  if (req.body.onthoud === true) onthoudProduct(data, regel, true);
   schrijfData(data);
   res.status(201).json(regel);
 });
@@ -97,6 +144,7 @@ app.put('/api/eten/:id', (req, res) => {
     return res.status(404).json({ fout: 'Regel niet gevonden.' });
   }
   data.eten[index] = { id: req.params.id, ...nieuw };
+    if (req.body.onthoud === true) onthoudProduct(data, data.eten[index], false);
   schrijfData(data);
   res.json(data.eten[index]);
 });
@@ -113,16 +161,16 @@ app.delete('/api/eten/:id', (req, res) => {
   res.json({ ok: true });
 });
 
+// Je eigen producten: /api/zoek/eigen?q=ei (zonder q: de meest gebruikte)
+app.get('/api/zoek/eigen', (req, res) => {
+  res.json(zoekEigen(String(req.query.q || '').trim(), 8));
+});
+
 // Basisvoeding uit NEVO: /api/zoek/basis?q=gebakken ei (staat lokaal, dus meteen klaar)
 app.get('/api/zoek/basis', (req, res) => {
   const q = String(req.query.q || '').trim();
   if (q.length < 2) return res.json([]);
   res.json(zoekNevo(q, 10).map(p => ({ ...p, bron: 'NEVO' })));
-});
-
-app.listen(PORT, () => {
-  console.log('Caloriecoach draait op http://localhost:' + PORT);
-  console.log('Gegevens in: ' + DATA_FILE);
 });
 
 // Merkproducten uit Open Food Facts: /api/zoek/merk?q=pindakaas
@@ -170,4 +218,9 @@ app.get('/api/zoek/merk', async (req, res) => {
     console.error('Zoeken mislukt:', fout.message);
     res.status(502).json({ fout: 'Merkproducten zoeken lukt nu niet.' });
   }
+});
+
+app.listen(PORT, () => {
+  console.log('Caloriecoach draait op http://localhost:' + PORT);
+  console.log('Gegevens in: ' + DATA_FILE);
 });
