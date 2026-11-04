@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Caloriecoach</title>
   <style>
-    body { font-family: Arial, sans-serif; max-width: 640px; margin: 2rem auto; padding: 0 1rem; color: #222; }
+    body { font-family: Arial, sans-serif; max-width: 680px; margin: 2rem auto; padding: 0 1rem; color: #222; }
     form { display: grid; gap: .6rem; margin-bottom: 1.5rem; }
     label { display: grid; gap: .2rem; font-size: .9rem; }
     input, select, button { font-size: 1rem; padding: .5rem; }
@@ -13,13 +13,16 @@
     table { width: 100%; border-collapse: collapse; }
     th, td { text-align: left; padding: .4rem; border-bottom: 1px solid #ddd; }
     .getal { text-align: right; }
+    .acties { white-space: nowrap; }
+    .acties button { margin-left: .3rem; padding: .3rem .5rem; font-size: .9rem; }
     #melding { color: #b00020; min-height: 1.2rem; }
+    form.wijzigen { background: #fff8e1; padding: .8rem; border-radius: 6px; }
   </style>
 </head>
 <body>
   <h1>Caloriecoach</h1>
 
-  <h2>Eten toevoegen</h2>
+  <h2 id="formTitel">Eten toevoegen</h2>
   <form id="etenForm">
     <label>Datum <input type="date" id="datum" required></label>
     <label>Maaltijd
@@ -33,7 +36,8 @@
     <label>Omschrijving <input type="text" id="omschrijving" required></label>
     <label>Hoeveelheid (gram, mag leeg) <input type="number" id="gram" min="0"></label>
     <label>Calorieën (kcal) <input type="number" id="kcal" min="0" required></label>
-    <button type="submit">Toevoegen</button>
+    <button type="submit" id="opslaanKnop">Toevoegen</button>
+    <button type="button" id="annuleerKnop" hidden>Annuleren</button>
     <div id="melding"></div>
   </form>
 
@@ -49,14 +53,50 @@
   </table>
 
   <script>
+    const formulier = document.getElementById('etenForm');
     const datumVeld = document.getElementById('datum');
     const melding = document.getElementById('melding');
+    const opslaanKnop = document.getElementById('opslaanKnop');
+    const annuleerKnop = document.getElementById('annuleerKnop');
+    const formTitel = document.getElementById('formTitel');
 
-    // Datum van vandaag in jouw tijdzone, in de vorm 2026-11-03
+    // Het id van de regel die je nu wijzigt. null betekent: je voegt een nieuwe regel toe.
+    let bewerkId = null;
+
+    // Datum van vandaag in jouw tijdzone, in de vorm 2026-11-04
     function vandaag() {
       const d = new Date();
       d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
       return d.toISOString().slice(0, 10);
+    }
+
+    // Maakt het formulier leeg en zet het terug in de stand "toevoegen"
+    function stopWijzigen() {
+      bewerkId = null;
+      formulier.classList.remove('wijzigen');
+      formTitel.textContent = 'Eten toevoegen';
+      opslaanKnop.textContent = 'Toevoegen';
+      annuleerKnop.hidden = true;
+      document.getElementById('omschrijving').value = '';
+      document.getElementById('gram').value = '';
+      document.getElementById('kcal').value = '';
+      melding.textContent = '';
+    }
+
+    // Zet een bestaande regel in het formulier, zodat je hem kunt aanpassen
+    function startWijzigen(regel) {
+      bewerkId = regel.id;
+      formulier.classList.add('wijzigen');
+      formTitel.textContent = 'Eten wijzigen';
+      opslaanKnop.textContent = 'Opslaan';
+      annuleerKnop.hidden = false;
+      datumVeld.value = regel.datum;
+      document.getElementById('maaltijd').value = regel.maaltijd;
+      document.getElementById('omschrijving').value = regel.omschrijving;
+      document.getElementById('gram').value = regel.gram ?? '';
+      document.getElementById('kcal').value = regel.kcal;
+      melding.textContent = '';
+      window.scrollTo({ top: 0, behavior: 'smooth' });
     }
 
     async function laadLijst() {
@@ -78,28 +118,37 @@
           tr.appendChild(td);
         });
 
-        const tdKnop = document.createElement('td');
-        const knop = document.createElement('button');
-        knop.textContent = 'Verwijder';
-        knop.addEventListener('click', async () => {
+        const tdActies = document.createElement('td');
+        tdActies.className = 'acties';
+
+        const wijzigKnop = document.createElement('button');
+        wijzigKnop.textContent = 'Wijzig';
+        wijzigKnop.addEventListener('click', () => startWijzigen(regel));
+        tdActies.appendChild(wijzigKnop);
+
+        const verwijderKnop = document.createElement('button');
+        verwijderKnop.textContent = 'Verwijder';
+        verwijderKnop.addEventListener('click', async () => {
           if (!confirm('Deze regel verwijderen?')) return;
           await fetch('/api/eten/' + regel.id, { method: 'DELETE' });
+          if (bewerkId === regel.id) stopWijzigen();
           laadLijst();
         });
-        tdKnop.appendChild(knop);
-        tr.appendChild(tdKnop);
+        tdActies.appendChild(verwijderKnop);
 
+        tr.appendChild(tdActies);
         tbody.appendChild(tr);
         totaal += regel.kcal;
       }
       document.getElementById('totaal').textContent = totaal;
     }
 
-    document.getElementById('etenForm').addEventListener('submit', async (e) => {
+    formulier.addEventListener('submit', async (e) => {
       e.preventDefault();
       melding.textContent = '';
-      const antwoord = await fetch('/api/eten', {
-        method: 'POST',
+      const wijzigt = bewerkId !== null;
+      const antwoord = await fetch(wijzigt ? '/api/eten/' + bewerkId : '/api/eten', {
+        method: wijzigt ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           datum: datumVeld.value,
@@ -114,12 +163,11 @@
         melding.textContent = fout.fout;
         return;
       }
-      document.getElementById('omschrijving').value = '';
-      document.getElementById('gram').value = '';
-      document.getElementById('kcal').value = '';
+      stopWijzigen();
       laadLijst();
     });
 
+    annuleerKnop.addEventListener('click', stopWijzigen);
     datumVeld.addEventListener('change', laadLijst);
     datumVeld.value = vandaag();
     laadLijst();
