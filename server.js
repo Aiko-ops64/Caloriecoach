@@ -22,6 +22,15 @@ function schrijfData(data) {
   fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
 }
 
+// Zet een waarde om naar een getal, of naar null als er niets (geldigs) is ingevuld
+function getalOfNull(w) {
+  if (w === '' || w == null) return null;
+  const n = Number(w);
+  return isNaN(n) ? null : n;
+}
+
+
+
 // Controleert de invoer van het formulier en maakt er een nette regel van.
 // Geeft null terug als er iets ontbreekt of niet klopt.
 function maakRegel(body) {
@@ -36,7 +45,10 @@ function maakRegel(body) {
     maaltijd: maaltijd || 'Tussendoor',
     omschrijving: tekst,
     gram: gram ? Number(gram) : null,
-    kcal: k
+    kcal: k,
+    eiwit: getalOfNull(body.eiwit),
+    kcal100: getalOfNull(body.kcal100),
+    eiwit100: getalOfNull(body.eiwit100)
   };
 }
 
@@ -89,6 +101,46 @@ app.delete('/api/eten/:id', (req, res) => {
   }
   schrijfData(data);
   res.json({ ok: true });
+});
+
+// Zoekt een product in Open Food Facts: /api/zoek?q=pindakaas
+app.get('/api/zoek', async (req, res) => {
+  const q = String(req.query.q || '').trim();
+  if (q.length < 2) return res.json([]);
+
+  const url = 'https://search.openfoodfacts.org/search'
+    + '?q=' + encodeURIComponent(q)
+    + '&page_size=15'
+    + '&fields=product_name,brands,nutriments';
+
+  try {
+    const antwoord = await fetch(url, {
+      headers: { 'User-Agent': 'Caloriecoach/1.0 (persoonlijk project)' },
+      signal: AbortSignal.timeout(8000)
+    });
+    if (!antwoord.ok) throw new Error('Status ' + antwoord.status);
+    const gegevens = await antwoord.json();
+
+    const resultaten = (gegevens.hits || [])
+      .map(p => ({
+        naam: p.product_name,
+        merk: Array.isArray(p.brands) ? p.brands.join(', ') : (p.brands || ''),
+        kcal100: p.nutriments ? p.nutriments['energy-kcal_100g'] : undefined,
+        eiwit100: p.nutriments ? p.nutriments['proteins_100g'] : undefined
+      }))
+      // Alleen producten met een naam en een calorie-waarde
+      .filter(p => p.naam && typeof p.kcal100 === 'number')
+      .map(p => ({
+        ...p,
+        kcal100: Math.round(p.kcal100),
+        eiwit100: typeof p.eiwit100 === 'number' ? Math.round(p.eiwit100 * 10) / 10 : null
+      }));
+
+    res.json(resultaten);
+  } catch (fout) {
+    console.error('Zoeken mislukt:', fout.message);
+    res.status(502).json({ fout: 'Zoeken lukt nu niet. Vul de calorieën zelf in.' });
+  }
 });
 
 app.listen(PORT, () => {
